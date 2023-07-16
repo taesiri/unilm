@@ -38,6 +38,7 @@ from PIL import Image
 from draw_box import *
 import gradio as gr
 
+import json
 
 # store the image path for visualize
 global_image_path = None
@@ -224,6 +225,18 @@ def make_batches(lines, cfg, task, max_positions, encode_fn):
         )
 
 
+def bbinfo_to_json(bbox_infos):
+    # Define the keys for the JSON objects
+    keys = ["entity", "x1_norm", "y1_norm", "x2_norm", "y2_norm"]
+    
+    # Convert each bounding box info to a JSON object
+    json_output = []
+    for bbox_info in bbox_infos:
+        json_objects = [dict(zip(keys, info)) for info in bbox_info]
+        json_output.append(json_objects)
+    
+    return json.dumps(json_output, indent=4)
+
 def main(cfg: FairseqConfig):
     if isinstance(cfg, Namespace):
         cfg = convert_namespace_to_omegaconf(cfg)
@@ -402,6 +415,7 @@ def main(cfg: FairseqConfig):
         global global_cnt
         global_cnt += 1
         # sort output to match input order
+        bbox_infos = []  
         for id_, src_tokens, hypos, info in sorted(results, key=lambda x: x[0]):
             src_str = ""
             if src_dict is not None:
@@ -415,6 +429,9 @@ def main(cfg: FairseqConfig):
                             tgt_dict.string(constraint, cfg.common_eval.post_process),
                         )
                     )
+
+
+
 
             # Process top predictions
             for hypo in hypos[: min(len(hypos), cfg.generation.nbest)]:
@@ -465,8 +482,14 @@ def main(cfg: FairseqConfig):
                     )
                     print("A-{}\t{}".format(global_cnt, alignment_str))
     
+    
+                bbox_info = decode_bbox_from_caption(response_str)
+                bbox_infos.append(bbox_info)
+
+        bbox_infos_json = bbinfo_to_json(bbox_infos)
+                
         # return vis_image, str(clean_response_str), str(response_str)
-        return vis_image, mark_texts(response_str)
+        return vis_image, mark_texts(response_str), bbox_infos_json
     
     term_of_use = """
     ### Terms of use  
@@ -503,6 +526,8 @@ def main(cfg: FairseqConfig):
                                     show_legend=True,
                                 ).style(color_map={"box": "red"})
                 
+                bbox_output = gr.JSON(label="Bounding Box")
+                
         with gr.Row():
             with gr.Column():
                 gr.Examples(examples=[  
@@ -520,10 +545,11 @@ def main(cfg: FairseqConfig):
         
         run_button.click(fn=generate_predictions, 
                          inputs=[image_input, text_input, do_sample, sampling_topp, sampling_temperature],  
-                         outputs=[image_output, text_output1],  
-                         show_progress=True, queue=True)
+                         outputs=[image_output, text_output1, bbox_output],  
+                         show_progress=True, queue=True, api_name="Kosmos2")
 
-    demo.launch(share=True)
+    demo.queue().launch(share=True, show_api=True, show_error=True)
+    
 
 # process the generated description for highlighting
 def remove_special_fields(text):  
